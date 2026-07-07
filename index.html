@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magnetic Fields — 자기장 시뮬레이터</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #06080c;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #d6deea;
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.dragging,
+  body.dragging * { cursor: grabbing !important; }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  #hud {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    padding: 13px 16px 14px;
+    background: rgba(8, 10, 14, 0.55);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    backdrop-filter: blur(10px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.55;
+    letter-spacing: 0.01em;
+    pointer-events: none;
+    max-width: 460px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  }
+  #hud .title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e6edf7;
+    margin-bottom: 4px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #hud .title .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ff8484, #c63030);
+    box-shadow: 0 0 6px rgba(255, 80, 80, 0.6);
+  }
+  #hud .counts {
+    color: #9aa6b8;
+    margin: 6px 0 10px;
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+  }
+  #hud .controls {
+    color: #6b7689;
+    font-size: 10.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.7;
+  }
+  #hud .controls kbd {
+    display: inline-block;
+    padding: 0 5px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 3px;
+    color: #c5cee0;
+    font-size: 10.5px;
+    min-width: 14px;
+    text-align: center;
+    margin-right: 3px;
+  }
+  #hud .controls .sep { color: #3d4757; margin: 0 4px; }
+  #hud .controls .controls-row { display: block; }
+  #hud .controls .controls-row:last-child { margin-bottom: 0; }
+  #hud .controls .controls-row + .controls-row { margin-top: 4px; }
+
+  #paused {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 84px;
+    font-weight: 200;
+    letter-spacing: 0.4em;
+    color: rgba(230, 237, 247, 0.07);
+    pointer-events: none;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    text-shadow: 0 0 24px rgba(200, 220, 255, 0.05);
+  }
+  body.paused #paused { display: flex; }
+
+  /* Subtle vignette to deepen the cosmic feel */
+  #vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at center,
+        rgba(0, 0, 0, 0) 0%,
+        rgba(0, 0, 0, 0) 55%,
+        rgba(0, 0, 0, 0.45) 100%);
+    z-index: 2;
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div id="vignette"></div>
+  <div id="hud">
+    <div class="title"><span class="dot"></span><span id="hud-title">자기장 시뮬레이터</span></div>
+    <div class="counts" id="hud-counts">자석: 0 · 입자: 3500</div>
+    <div class="controls" id="hud-controls"></div>
+  </div>
+  <div id="paused">PAUSED</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ============================================================
+  //  CONFIG (frozen — physics & rendering constants)
+  // ============================================================
+  const CONFIG = Object.freeze({
+    PARTICLE_COUNT:    3500,    // default particles
+    MAX_PARTICLES:     8000,
+    MIN_PARTICLES:      500,
+    PARTICLE_STEP:      500,
+    MAGNET_LEN:         120,
+    MAGNET_HALF_LEN:     60,
+    MAGNET_WIDTH:        22,
+    MAGNET_HALF_W:       11,
+    MAX_MAGNETS:           8,
+    K:                 1800,    // field strength
+    EPS2:               900,    // softening (px²)
+    ALPHA:              1.5,    // distance falloff exponent
+    BASE_SPEED:         1.4,    // tangential drift speed
+    NORM_GAIN:          0.35,
+    DAMPING:            0.90,
+    JITTER:             0.05,
+    SKIP_THRESHOLD:     0.005,
+    PARTICLE_LEN:       4.6,    // full segment length in px
+    FADE_ALPHA:        0.10,
+    BG_SOLID:       '#06080c',
+    BG_FADE:        'rgba(6, 8, 12, 0.10)',
+    PARTICLE_COLOR:  'rgba(225, 232, 250, 0.78)',
+    HIT_PAD:          14,      // extra hit-test tolerance
+  });
+
+  // ============================================================
+  //  Canvas setup
+  // ============================================================
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  let W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    const oldW = W, oldH = H;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = Math.max(1, window.innerWidth);
+    const cssH = Math.max(1, window.innerHeight);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.width  = Math.floor(cssW * DPR);
+    canvas.height = Math.floor(cssH * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    W = cssW;
+    H = cssH;
+    // Seed background
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = CONFIG.BG_SOLID;
+    ctx.fillRect(0, 0, W, H);
+    // Reflow existing particles if any
+    if (oldW > 0 && oldH > 0 && pX && pX.length > 0) {
+      const sx = W / oldW, sy = H / oldH;
+      for (let i = 0; i < particleCount; i++) {
+        pX[i] *= sx;
+        pY[i] *= sy;
+      }
+    }
+  }
+  window.addEventListener('resize', resize);
+
+  // ============================================================
+  //  Magnet
+  // ============================================================
+  class Magnet {
+    constructor(x, y, angle) {
+      this.x = x;
+      this.y = y;
+      this.angle = angle;
+      this.selected = false;
+      this.updatePoles();
+    }
+    updatePoles() {
+      const ca = Math.cos(this.angle);
+      const sa = Math.sin(this.angle);
+      this.nX = this.x + ca * CONFIG.MAGNET_HALF_LEN;
+      this.nY = this.y + sa * CONFIG.MAGNET_HALF_LEN;
+      this.sX = this.x - ca * CONFIG.MAGNET_HALF_LEN;
+      this.sY = this.y - sa * CONFIG.MAGNET_HALF_LEN;
+    }
+  }
+
+  // ============================================================
+  //  Particles (Float32Array pools — zero per-frame GC)
+  // ============================================================
+  let pX = null, pY = null, pVX = null, pVY = null, pAngle = null;
+  let particleCount = CONFIG.PARTICLE_COUNT;
+
+  function allocateParticles(n) {
+    pX     = new Float32Array(n);
+    pY     = new Float32Array(n);
+    pVX    = new Float32Array(n);
+    pVY    = new Float32Array(n);
+    pAngle = new Float32Array(n);
+    for (let i = 0; i < n; i++) respawn(i, true);
+  }
+
+  function respawn(i, anywhere) {
+    if (anywhere) {
+      pX[i] = Math.random() * W;
+      pY[i] = Math.random() * H;
+    } else {
+      // Respawn at a random edge (uniform over 4 edges)
+      const side = (Math.random() * 4) | 0;
+      if      (side === 0) { pX[i] = Math.random() * W; pY[i] = -3; }
+      else if (side === 1) { pX[i] = W + 3;             pY[i] = Math.random() * H; }
+      else if (side === 2) { pX[i] = Math.random() * W; pY[i] = H + 3; }
+      else                 { pX[i] = -3;                pY[i] = Math.random() * H; }
+    }
+    pVX[i] = 0;
+    pVY[i] = 0;
+    pAngle[i] = Math.random() * Math.PI * 2;
+  }
+
+  function setParticleCount(n) {
+    if (n === particleCount || n < 1) return;
+    const oldX = pX, oldY = pY, oldVX = pVX, oldVY = pVY, oldAng = pAngle;
+    const oldN = particleCount;
+    particleCount = n;
+    allocateParticles(n);
+    const keep = Math.min(oldN, n);
+    for (let i = 0; i < keep; i++) {
+      pX[i]     = oldX[i];
+      pY[i]     = oldY[i];
+      pVX[i]    = oldVX[i];
+      pVY[i]    = oldVY[i];
+      pAngle[i] = oldAng[i];
+    }
+  }
+
+  // ============================================================
+  //  Scene state
+  // ============================================================
+  const magnets = [];
+  let selectedMagnet = null;
+  let paused = false;
+  let trailsOn = true;
+  let dragging = false;
+  let dragMode = null;          // 'move' | 'rotate'
+  let dragStartData = null;
+  let lastDoubleTapTime = 0;
+  let lastDoubleTapX = 0, lastDoubleTapY = 0;
+  let frameCount = 0;
+
+  function defaultMagnets() {
+    const cy = H * 0.5;
+    const off = Math.min(W, H) * 0.20;
+    // Two horizontal magnets so the demo shows the effect instantly.
+    // Left magnet → N pole on the right end (facing center).
+    // Right magnet → S pole on the left end (facing center).
+    magnets.push(new Magnet(W * 0.5 - off, cy, 0));
+    magnets.push(new Magnet(W * 0.5 + off, cy, 0));
+  }
+
+  function addMagnetAt(x, y, angle) {
+    if (magnets.length >= CONFIG.MAX_MAGNETS) return null;
+    const a = (typeof angle === 'number')
+      ? angle
+      : (frameCount * 0.6180339887) % (Math.PI * 2); // golden-ratio staggering
+    const m = new Magnet(x, y, a);
+    magnets.push(m);
+    selectMagnet(m);
+    return m;
+  }
+
+  function selectMagnet(m) {
+    if (selectedMagnet && selectedMagnet !== m) selectedMagnet.selected = false;
+    selectedMagnet = m;
+    if (m) m.selected = true;
+  }
+
+  // ============================================================
+  //  Input — pointer (mouse/touch/pen unified)
+  // ============================================================
+  function getPointerPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function hitTestMagnet(px, py) {
+    const halfLen = CONFIG.MAGNET_HALF_LEN + CONFIG.HIT_PAD;
+    const halfW   = CONFIG.MAGNET_HALF_W + 8;
+    for (let i = magnets.length - 1; i >= 0; i--) {
+      const m = magnets[i];
+      const ca = Math.cos(m.angle);
+      const sa = Math.sin(m.angle);
+      const dx = px - m.x;
+      const dy = py - m.y;
+      const along  =  dx * ca + dy * sa;
+      const across = -dx * sa + dy * ca;
+      if (Math.abs(along) <= halfLen && Math.abs(across) <= halfW) return m;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = getPointerPos(e);
+    const hit = hitTestMagnet(p.x, p.y);
+    if (hit) {
+      selectMagnet(hit);
+      dragging = true;
+      dragMode = (e.button === 2 || e.button === 1 || e.shiftKey) ? 'rotate' : 'move';
+      if (dragMode === 'move') {
+        dragStartData = { offsetX: hit.x - p.x, offsetY: hit.y - p.y };
+      } else {
+        dragStartData = {
+          startAngle: Math.atan2(p.y - hit.y, p.x - hit.x),
+          startMagnetAngle: hit.angle,
+        };
+      }
+      document.body.classList.add('dragging');
+      try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    } else {
+      selectMagnet(null);
+      const now = performance.now();
+      const dx = p.x - lastDoubleTapX;
+      const dy = p.y - lastDoubleTapY;
+      const distSq = dx * dx + dy * dy;
+      if (now - lastDoubleTapTime < 400 && distSq < 30 * 30) {
+        addMagnetAt(p.x, p.y);
+        lastDoubleTapTime = 0;
+      } else {
+        lastDoubleTapTime = now;
+        lastDoubleTapX = p.x;
+        lastDoubleTapY = p.y;
+      }
+    }
+  });
+
+  function endDrag() {
+    dragging = false;
+    document.body.classList.remove('dragging');
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', endDrag);
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging || !selectedMagnet) return;
+    const p = getPointerPos(e);
+    if (dragMode === 'move') {
+      selectedMagnet.x = p.x + dragStartData.offsetX;
+      selectedMagnet.y = p.y + dragStartData.offsetY;
+      selectedMagnet.updatePoles();
+    } else {
+      const cur = Math.atan2(p.y - selectedMagnet.y, p.x - selectedMagnet.x);
+      let delta = cur - dragStartData.startAngle;
+      while (delta >  Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      selectedMagnet.angle = dragStartData.startMagnetAngle + delta;
+      selectedMagnet.updatePoles();
+    }
+  });
+
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ============================================================
+  //  Input — keyboard
+  // ============================================================
+  window.addEventListener('keydown', (e) => {
+    const k = e.key;
+    // Ignore keys when modifier-held (browser shortcuts)
+    if (e.altKey || e.metaKey || e.ctrlKey) return;
+
+    if (k === 'a' || k === 'A') {
+      addMagnetAt(W * 0.5 + (Math.random() - 0.5) * 80,
+                  H * 0.5 + (Math.random() - 0.5) * 80);
+    } else if (k === 'r' || k === 'R') {
+      if (selectedMagnet) {
+        selectedMagnet.angle += (e.shiftKey ? -1 : 1) * (Math.PI / 12);
+        selectedMagnet.updatePoles();
+      }
+    } else if (k === 'Delete' || k === 'Backspace') {
+      if (selectedMagnet) {
+        const idx = magnets.indexOf(selectedMagnet);
+        if (idx >= 0) {
+          magnets.splice(idx, 1);
+          selectedMagnet = null;
+        }
+      }
+    } else if (k === 'c' || k === 'C') {
+      magnets.length = 0;
+      selectedMagnet = null;
+    } else if (k === ' ' || k === 'Spacebar') {
+      e.preventDefault();
+      paused = !paused;
+      document.body.classList.toggle('paused', paused);
+    } else if (k === '+' || k === '=') {
+      setParticleCount(Math.min(particleCount + CONFIG.PARTICLE_STEP, CONFIG.MAX_PARTICLES));
+    } else if (k === '-' || k === '_') {
+      setParticleCount(Math.max(particleCount - CONFIG.PARTICLE_STEP, CONFIG.MIN_PARTICLES));
+    } else if (k === 't' || k === 'T') {
+      trailsOn = !trailsOn;
+    } else if (k === 'l' || k === 'L') {
+      toggleLanguage();
+    }
+  });
+
+  // ============================================================
+  //  Rendering — magnets
+  // ============================================================
+  function drawMagnets() {
+    ctx.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < magnets.length; i++) {
+      const m = magnets[i];
+      ctx.save();
+      ctx.translate(m.x, m.y);
+      ctx.rotate(m.angle);
+
+      const hl = CONFIG.MAGNET_HALF_LEN;
+      const hw = CONFIG.MAGNET_HALF_W;
+      const r  = hw;
+
+      // Outer drop-shadow halo (subtle)
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 2;
+
+      // Body — rounded-rect with vertical sheen
+      const bodyGrad = ctx.createLinearGradient(0, -hw, 0, hw);
+      bodyGrad.addColorStop(0,    '#2a2f3a');
+      bodyGrad.addColorStop(0.45, '#15181f');
+      bodyGrad.addColorStop(0.55, '#15181f');
+      bodyGrad.addColorStop(1,    '#2a2f3a');
+      ctx.fillStyle = bodyGrad;
+      ctx.beginPath();
+      ctx.moveTo(-hl + r, -hw);
+      ctx.arcTo( hl, -hw,  hl,  hw, r);
+      ctx.arcTo( hl,  hw, -hl,  hw, r);
+      ctx.arcTo(-hl,  hw, -hl, -hw, r);
+      ctx.arcTo(-hl, -hw,  hl, -hw, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      // N pole glow (right half — red)
+      const nR = hl * 0.7;
+      const nCx = hl * 0.55;
+      const nGrad = ctx.createRadialGradient(nCx, 0, 0, nCx, 0, nR);
+      nGrad.addColorStop(0,    'rgba(255, 110, 110, 0.92)');
+      nGrad.addColorStop(0.35, 'rgba(220,  60,  60, 0.55)');
+      nGrad.addColorStop(0.85, 'rgba(150,  30,  30, 0.10)');
+      nGrad.addColorStop(1,    'rgba(150,  30,  30, 0.00)');
+      ctx.fillStyle = nGrad;
+      ctx.fillRect(0, -hw * 1.4, hl, hw * 2.8);
+
+      // S pole glow (left half — blue)
+      const sCx = -hl * 0.55;
+      const sGrad = ctx.createRadialGradient(sCx, 0, 0, sCx, 0, nR);
+      sGrad.addColorStop(0,    'rgba(110, 150, 255, 0.92)');
+      sGrad.addColorStop(0.35, 'rgba( 70, 110, 235, 0.55)');
+      sGrad.addColorStop(0.85, 'rgba( 30,  60, 170, 0.10)');
+      sGrad.addColorStop(1,    'rgba( 30,  60, 170, 0.00)');
+      ctx.fillStyle = sGrad;
+      ctx.fillRect(-hl, -hw * 1.4, hl, hw * 2.8);
+
+      // Pole tip dots
+      ctx.beginPath();
+      ctx.arc( hl, 0, 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff5a5a';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-hl, 0, 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#5a8aff';
+      ctx.fill();
+
+      // Labels
+      ctx.font = '600 15px ui-sans-serif, system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffeaea';
+      ctx.fillText('N', hl * 0.55, 0.5);
+      ctx.fillStyle = '#eaf0ff';
+      ctx.fillText('S', -hl * 0.55, 0.5);
+
+      ctx.restore();
+
+      // Selection ring (in world space → does NOT rotate with magnet)
+      if (m.selected) {
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, CONFIG.MAGNET_HALF_LEN + 9, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  // ============================================================
+  //  Main loop
+  // ============================================================
+  function step() {
+    frameCount++;
+
+    if (!paused) {
+      // -- 1. Trail fade (or solid clear) --
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = trailsOn ? CONFIG.BG_FADE : CONFIG.BG_SOLID;
+      ctx.fillRect(0, 0, W, H);
+
+      // -- 2. Update particles --
+      const n       = particleCount;
+      const K       = CONFIG.K;
+      const eps2    = CONFIG.EPS2;
+      const mags    = magnets;
+      const mCount  = mags.length;
+      const damping = CONFIG.DAMPING;
+      const baseSpd = CONFIG.BASE_SPEED;
+      const nGain   = CONFIG.NORM_GAIN;
+      const jitter  = CONFIG.JITTER;
+      const skip    = CONFIG.SKIP_THRESHOLD;
+      const minPoleR2 = (CONFIG.MAGNET_HALF_W + 4) * (CONFIG.MAGNET_HALF_W + 4);
+
+      for (let i = 0; i < n; i++) {
+        const x = pX[i];
+        const y = pY[i];
+        let bx = 0, by = 0;
+
+        if (mCount === 0) {
+          // No magnets → no field. Particles fade.
+          pAngle[i] = Math.random() * Math.PI * 2;
+          // nudge with pure jitter so they slowly drift
+          pVX[i] = damping * pVX[i] + (Math.random() - 0.5) * jitter * 4;
+          pVY[i] = damping * pVY[i] + (Math.random() - 0.5) * jitter * 4;
+          pX[i] = x + pVX[i];
+          pY[i] = y + pVY[i];
+          if (pX[i] < -3 || pX[i] > W + 3 || pY[i] < -3 || pY[i] > H + 3) respawn(i, false);
+          continue;
+        }
+
+        for (let mi = 0; mi < mCount; mi++) {
+          const mag = mags[mi];
+          // N pole (sign +1)
+          let dx = x - mag.nX;
+          let dy = y - mag.nY;
+          let r2s = dx * dx + dy * dy + eps2;
+          let invR = 1 / Math.sqrt(r2s);
+          let r    = Math.sqrt(dx * dx + dy * dy);
+          if (r < 0.6) r = 0.6;
+          const magN =  K * invR / r;
+          bx += magN * (dx / r);
+          by += magN * (dy / r);
+          // S pole (sign -1)
+          dx = x - mag.sX;
+          dy = y - mag.sY;
+          r2s = dx * dx + dy * dy + eps2;
+          invR = 1 / Math.sqrt(r2s);
+          r = Math.sqrt(dx * dx + dy * dy);
+          if (r < 0.6) r = 0.6;
+          const magS = -K * invR / r;
+          bx += magS * (dx / r);
+          by += magS * (dy / r);
+        }
+
+        const bMag = Math.sqrt(bx * bx + by * by);
+
+        if (bMag < skip) {
+          pAngle[i] = Math.random() * Math.PI * 2;
+          continue;
+        }
+
+        const speed = baseSpd * Math.min(1, bMag * nGain);
+        const invBMag = 1 / bMag;
+        const jx = (Math.random() - 0.5) * jitter;
+        const jy = (Math.random() - 0.5) * jitter;
+        const vx = damping * pVX[i] + speed * (bx * invBMag) + jx;
+        const vy = damping * pVY[i] + speed * (by * invBMag) + jy;
+        const nx = x + vx;
+        const ny = y + vy;
+
+        // OOB or pole-proximity → respawn
+        let respawnIt = (nx < -3 || nx > W + 3 || ny < -3 || ny > H + 3);
+        if (!respawnIt) {
+          for (let mi = 0; mi < mCount; mi++) {
+            const mag = mags[mi];
+            const dxN = nx - mag.nX, dyN = ny - mag.nY;
+            if (dxN * dxN + dyN * dyN < minPoleR2) { respawnIt = true; break; }
+            const dxS = nx - mag.sX, dyS = ny - mag.sY;
+            if (dxS * dxS + dyS * dyS < minPoleR2) { respawnIt = true; break; }
+          }
+        }
+
+        if (respawnIt) { respawn(i, false); continue; }
+
+        pX[i] = nx;
+        pY[i] = ny;
+        pVX[i] = vx;
+        pVY[i] = vy;
+        pAngle[i] = Math.atan2(by, bx);
+      }
+
+      // -- 3. Draw particles (additive bloom) --
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = CONFIG.PARTICLE_COLOR;
+      ctx.lineWidth = 1;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      const seg = CONFIG.PARTICLE_LEN * 0.5;
+      for (let i = 0; i < n; i++) {
+        const a   = pAngle[i];
+        const ca  = Math.cos(a);
+        const sa  = Math.sin(a);
+        const dx  = ca * seg;
+        const dy  = sa * seg;
+        const px  = pX[i];
+        const py  = pY[i];
+        ctx.moveTo(px - dx, py - dy);
+        ctx.lineTo(px + dx, py + dy);
+      }
+      ctx.stroke();
+
+      // -- 4. Draw magnets on top --
+      drawMagnets();
+    }
+
+    // -- HUD update (always tick so pause state shows immediately) --
+    updateHudIfChanged();
+
+    requestAnimationFrame(step);
+  }
+
+  // ============================================================
+  //  I18N — Korean default, English toggle on 'L' key
+  // ============================================================
+  let currentLang = 'ko';
+
+  const I18N = {
+    ko: {
+      title: '자기장 시뮬레이터',
+      paused: '일시정지',
+      counts: (m, p, paused) =>
+        '자석: ' + m + ' · 입자: ' + p + (paused ? ' · 일시정지' : ''),
+      controlsRows: [
+        [
+          { kbd: 'drag',       label: '이동',    sep: '·' },
+          { kbd: '⇧+drag',     label: '',        sep: '/' },
+          { kbd: 'right-drag', label: '회전',    sep: ''  },
+        ],
+        [
+          { kbd: 'A',          label: '추가',     sep: '·' },
+          { kbd: 'R',          label: '회전',     sep: '·' },
+          { kbd: 'Del',        label: '삭제',     sep: '·' },
+          { kbd: 'C',          label: '전체삭제', sep: ''  },
+        ],
+        [
+          { kbd: 'Space',      label: '일시정지', sep: '·' },
+          { kbd: '±',          label: '입자수',   sep: '·' },
+          { kbd: 'T',          label: '트레일',   sep: '·' },
+          { kbd: '더블클릭',     label: '추가',    sep: ''  },
+        ],
+        [
+          { kbd: 'L',          label: '한/영 전환', sep: '' },
+        ],
+      ],
+    },
+    en: {
+      title: 'Magnetic Fields',
+      paused: 'PAUSED',
+      counts: (m, p, paused) =>
+        'magnets: ' + m + ' · particles: ' + p + (paused ? ' · paused' : ''),
+      controlsRows: [
+        [
+          { kbd: 'drag',       label: 'move',    sep: '·' },
+          { kbd: '⇧+drag',     label: '',        sep: '/' },
+          { kbd: 'right-drag', label: 'rotate',  sep: ''  },
+        ],
+        [
+          { kbd: 'A',          label: 'add',     sep: '·' },
+          { kbd: 'R',          label: 'rotate',  sep: '·' },
+          { kbd: 'Del',        label: 'remove',  sep: '·' },
+          { kbd: 'C',          label: 'clear',   sep: ''  },
+        ],
+        [
+          { kbd: 'Space',      label: 'pause',     sep: '·' },
+          { kbd: '±',          label: 'particles', sep: '·' },
+          { kbd: 'T',          label: 'trails',    sep: '·' },
+          { kbd: 'dbl-click',  label: 'add',       sep: ''  },
+        ],
+        [
+          { kbd: 'L',          label: '한/EN toggle', sep: '' },
+        ],
+      ],
+    },
+  };
+
+  // Apply locale to all localized DOM nodes (title bar, paused overlay, controls legend).
+  function applyI18n() {
+    const t = I18N[currentLang];
+    document.title = t.title;
+    const titleEl = document.getElementById('hud-title');
+    if (titleEl) titleEl.textContent = t.title;
+    const pausedEl = document.getElementById('paused');
+    if (pausedEl) pausedEl.textContent = t.paused;
+
+    const controls = document.getElementById('hud-controls');
+    if (!controls) return;
+    // Build rows
+    while (controls.firstChild) controls.removeChild(controls.firstChild);
+    for (let r = 0; r < t.controlsRows.length; r++) {
+      const row = t.controlsRows[r];
+      const rowDiv = document.createElement('div');
+      rowDiv.className = 'controls-row';
+      for (let i = 0; i < row.length; i++) {
+        const node = row[i];
+        const k = document.createElement('kbd');
+        k.textContent = node.kbd;
+        rowDiv.appendChild(k);
+        if (node.label) {
+          rowDiv.appendChild(document.createTextNode(' ' + node.label));
+        }
+        if (node.sep) {
+          const s = document.createElement('span');
+          s.className = 'sep';
+          s.textContent = node.sep;
+          rowDiv.appendChild(s);
+        }
+      }
+      controls.appendChild(rowDiv);
+    }
+  }
+
+  function toggleLanguage() {
+    currentLang = (currentLang === 'ko') ? 'en' : 'ko';
+    applyI18n();
+    lastHudSig = '';
+    updateHudIfChanged();
+  }
+
+  // ============================================================
+  //  HUD (DOM-side updates throttled by signature)
+  // ============================================================
+  const hudCountsEl = document.getElementById('hud-counts');
+  let lastHudSig = '';
+  function updateHudIfChanged() {
+    const sig = magnets.length + '|' + particleCount + '|' + (paused ? 1 : 0) + '|' + currentLang;
+    if (sig !== lastHudSig) {
+      lastHudSig = sig;
+      hudCountsEl.textContent = I18N[currentLang].counts(magnets.length, particleCount, paused);
+    }
+  }
+
+  // ============================================================
+  //  Boot
+  // ============================================================
+  resize();             // sets W, H, seeds bg
+  allocateParticles(particleCount);
+  defaultMagnets();
+  applyI18n();          // populate localized HUD (Korean default)
+  updateHudIfChanged(); // populate counts
+  requestAnimationFrame(step);
+
+})();
+</script>
+</body>
+</html>
