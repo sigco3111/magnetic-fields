@@ -1,0 +1,18 @@
+# AI session / dev-tool runtime artifacts
+.omo/
+.playwright-mcp/
+.claude/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
