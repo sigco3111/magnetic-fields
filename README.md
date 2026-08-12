@@ -10,7 +10,7 @@ N극과 S극을 가진 막대자석 여러 개를 드래그 배치하면, 수천
 
 ## 🎬 라이브 데모
 
-> **👉 [https://magnetic-fields.vercel.app/](https://magnetic-fields.vercel.app/)** — 브라우저에서 바로 실행
+> **👉 [https://sigco3111.github.io/magnetic-fields/](https://sigco3111.github.io/magnetic-fields/)** — 브라우저에서 바로 실행
 
 | | |
 |---|---|
