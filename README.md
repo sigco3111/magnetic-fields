@@ -14,7 +14,7 @@ N극과 S극을 가진 막대자석 여러 개를 드래그 배치하면, 수천
 
 | | |
 |---|---|
-| ![Live](https://img.shields.io/badge/Live-Demo-7C3AED?style=for-the-badge&logo=vercel&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2Fmagnetic--fields-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/magnetic-fields) |
+| ![Live](https://img.shields.io/badge/Live-Demo-222222?style=for-the-badge&logo=githubpages&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2Fmagnetic--fields-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/magnetic-fields) |
 | ![Status](https://img.shields.io/badge/Status-Live-22C55E?style=flat-square) | ![Stack](https://img.shields.io/badge/Stack-Vanilla_JS-F7DF1E?style=flat-square&logo=javascript&logoColor=black) |
 | ![License](https://img.shields.io/badge/License-MIT-F1C40F?style=flat-square) | ![Deps](https://img.shields.io/badge/Dependencies-0-9CA3AF?style=flat-square) |
 
@@ -81,7 +81,7 @@ python3 -m http.server 8000
 ```
 
 ### 방법 3: 라이브 데모
-위 Vercel alias URL에서 바로 확인 가능합니다.
+위 GitHub Pages URL에서 바로 확인 가능합니다.
 
 ---
 
